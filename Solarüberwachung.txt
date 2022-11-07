@@ -1,4 +1,5 @@
 !Überwachung des allgemeinen Stromverbrauchs und der Einspeisung durch die PV Anlage
+!GitHub Test
 !Input: Stromverbrauch "Wurzelzähler" am Stromkasten
 !Input: Stromeinspeisung PV Anlage über Messsteckdose
 
