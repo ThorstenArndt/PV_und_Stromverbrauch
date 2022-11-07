@@ -1,0 +1,426 @@
+!Näherungsfunktion zur Berechnung der verbrauchten kWh auf Basis der Rückmeldung aus dem Shelly E3
+!Vorgehen: Skript läuft alle x Minuten und es wird der Stromverbrauch mit der Frequenz multipliziert
+
+
+!benötige (System)variablen 
+!var_StromL1EinspeisungAltkWh	enthält die alte Rückmeldung aus dem Shelly für die Einspeisung auf Phase 1
+!var_StromL1BezugAltkWh			enthält die alte Rückmeldung aus dem Shelly für den Bezug auf Phase 1
+!var_StromL2BezugAltkWh			enthält die alte Rückmeldung aus dem Shelly für den Bezug auf Phase 2		
+!var_StromL3BezugAltkWh			enthält die alte Rückmeldung aus dem Shelly für den Bezug auf Phase 3
+real StromL1EinspeisungAltkWh = dom.GetObject("var_StromL1EinspeisungAltkWh").Value(); 
+real StromL1BezugAltkWh	= dom.GetObject("var_StromL1BezugAltkWh").Value();
+real StromL2BezugAltkWh	= dom.GetObject("var_StromL2BezugAltkWh").Value();
+real StromL3BezugAltkWh	= dom.GetObject("var_StromL3BezugAltkWh").Value();
+real StromZaehlerStandAlt = dom.GetObject("var_StromZaehlerStand").Value();			!Simuliert den Zählerstand anhand der Veränderungen im Shelly. Müsste eigentlich sein: ZaehlerstandALT + StromGesamtBezugDeltakWh - StromL1EinspeisungDeltakWh
+real StromEinspeisungGesamt = dom.GetObject("var_StromEinspeisungGesamt").Value(); 
+
+
+string StrompreisCCU; 			!Aktueller Strompreis in der CCU
+string stdout;					!Variablen für den Strompreis
+string cmd; 					!Variablen für den Strompreis
+var Debug = true; 				!wenn true werden WriteLine-Befehle ausgegeben
+var url; 						!enthält die URL des E3 für den http Request
+string RueckmeldungE3;			!Nimmt die Antwort auf den http Request auf 
+integer Anfang;					!zum Textparsing - Anfang
+integer Ende; 					!zum Textparsing - Ende
+integer Laenge; 				!zum Textparsing - Länge des Rückmeldestrings
+string LeistungPhaseWatt;		!Zwischenspeicher für die aktuelle Leistung einer Phase
+var LeistungPVWatt;				!Aktuelle Leistung der PV Anlage in Watt
+real LeistungGesamtWatt = 0.0;	!Aktuelle Gesamtleistung; 
+var StromL1BezugNeukWh;			!Gesamtsumme Strombezug Phase 1 aus dem Shelly
+var StromL1BezugDeltakWh;		!Seit letzter Ermittlung bezogener Strom aus Phase 1
+var StromL2BezugNeukWh;			!Gesamtsumme Strombezug Phase 1 aus dem Shelly
+var StromL2BezugDeltakWh;		!Seit letzter Ermittlung bezogener Strom aus Phase 2
+var StromL3BezugNeukWh;			!Gesamtsumme Strombezug Phase 1 aus dem Shelly
+var StromL3BezugDeltakWh;		!Seit letzter Ermittlung bezogener Strom aus Phase 3
+var StromGesamtBezugkWh;
+var StromGesamtBezugDeltakWh; 
+var StromL1EinspeisungNeukWh;	!Gesamtsumme Strombezug Phase 1 aus dem Shelly
+var StromL1EinspeisungDeltakWh; !Seit letzter Ermittlung eingepeister Strom aus Phase 1
+real StromZaehlerStandNeu; 
+var StromVerbrauchHeute;
+var StromVerbrauchMonat; 
+var StromVerbrauchJahr;
+var StromKostenHeute;
+var StromKostenMonat;
+var StromKostenJahr; 
+
+
+
+
+if(Debug) 
+{
+	WriteLine("StromL1BezugAltkWh : " # StromL1BezugAltkWh);
+	WriteLine("StromL2BezugAltkWh : " # StromL2BezugAltkWh);
+	WriteLine("StromL3BezugAltkWh : " # StromL3BezugAltkWh);
+	!WriteLine(StromL1BezugAltkWh.ToFloat() + StromL2BezugAltkWh.ToFloat() + StromL3BezugAltkWh.ToFloat();
+}
+
+
+
+
+
+
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Ziehen des Strompreises aus der CCU
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+cmd = '/bin/sh -c \'cat /etc/config/energyPrice|sed -r "s/\\"//g\"\'';
+dom.GetObject("CUxD.CUX2801099:1.CMD_SETS").State(cmd);
+dom.GetObject("CUxD.CUX2801099:1.CMD_QUERY_RET").State(1);
+stdout = dom.GetObject("CUxD.CUX2801099:1.CMD_RETS").State();
+StrompreisCCU = (stdout.StrValueByIndex(":",2)).Substr(1,6);
+StrompreisCCU = StrompreisCCU.ToFloat(); 
+if(Debug) 
+{
+	WriteLine("Strompreis: " # StrompreisCCU);
+}
+
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Aktuellen Stromverbrauch aus dem E3 ermitteln
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+if(Debug)
+{
+	WriteLine("Stromverbrauch ermitteln");
+}
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!PV Anlage 
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+LeistungPVWatt = dom.GetObject("HmIP-RF.0001D3C99CAC04:6.POWER").Value();
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Nun den E3 
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+url = "http://admin:wuenne22@192.168.188.115/status/emeter/0/power"; !hier die richtigen Daten eintragen 
+if(Debug)
+{
+	WriteLine("URL: " # url);
+}
+dom.GetObject("CUxD.CUX2801099:1.CMD_SETS").State("wget -q -O - '"#url#"'");
+dom.GetObject("CUxD.CUX2801099:1.CMD_QUERY_RET").State(1);
+RueckmeldungE3 = dom.GetObject("CUxD.CUX2801099:1.CMD_RETS").State();
+dom.GetObject("CUxD.CUX2801099:1.CMD_SETS").State("0");
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Phase L1
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+Laenge = RueckmeldungE3.Length(); 
+Anfang = RueckmeldungE3.Find("emeters") + 19;
+Ende = RueckmeldungE3.Find("pf")-2; 
+LeistungPhaseWatt = RueckmeldungE3.Substr(Anfang, Ende-Anfang); 
+RueckmeldungE3 = RueckmeldungE3.Substr(Anfang,Laenge - Anfang);
+if(Debug)
+{
+	WriteLine(RueckmeldungE3);
+	WriteLine("Aktueller Strom L1: " # LeistungPhaseWatt);
+}
+LeistungGesamtWatt = LeistungPhaseWatt.ToFloat();
+if(Debug)
+{
+	WriteLine("Leistung gesamt Watt: " # LeistungGesamtWatt);
+}
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Aktueller Gesamtstrombezug aus dem Netz für Phase 1
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+Anfang = RueckmeldungE3.Find("total") + 7;
+Ende = RueckmeldungE3.Find("total_returned")-2; 
+StromL1BezugNeukWh = RueckmeldungE3.Substr(Anfang, Ende-Anfang); 
+RueckmeldungE3 = RueckmeldungE3.Substr(Anfang,Laenge - Anfang);
+if(Debug)
+{
+	WriteLine("L1 Stromverbrauch gesamt: " # StromL1BezugNeukWh);
+}
+
+dom.GetObject("var_StromL1BezugAltkWh").State(StromL1BezugNeukWh.ToFloat());
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Strombezug seit letzter Ermittlung für Phase 1
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+StromL1BezugDeltakWh = StromL1BezugNeukWh.ToFloat() - StromL1BezugAltkWh;
+if(Debug)
+{
+	WriteLine("L1 Delta Strombezug: " # StromL1BezugDeltakWh);
+}
+
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Stromeinspeisung L1 laut Shelly-Speicher
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+Anfang = RueckmeldungE3.Find("total_returned") + 16;
+Ende = RueckmeldungE3.Find("power")-4; 
+StromL1EinspeisungNeukWh = RueckmeldungE3.Substr(Anfang, Ende-Anfang); 
+RueckmeldungE3 = RueckmeldungE3.Substr(Anfang,Laenge - Anfang);
+if(Debug)
+{
+	WriteLine("L1 Stromeinspeisung gesamt: " # StromL1EinspeisungNeukWh);
+}
+dom.GetObject("var_StromL1EinspeisungAltkWh").State(StromL1EinspeisungNeukWh.ToFloat());
+
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Stromeinspeisung seit letzter Ermittlung für Phase 1
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+StromL1EinspeisungDeltakWh = StromL1EinspeisungNeukWh.ToFloat() - StromL1EinspeisungAltkWh;
+if(Debug)
+{
+	WriteLine("L1 Einspeisung alt: " # StromL1EinspeisungAltkWh);
+	WriteLine("L1 Einspeisung neu: " # StromL1EinspeisungNeukWh);
+	WriteLine("L1 Delta Stromeinspeisung: " # StromL1EinspeisungDeltakWh);
+}
+	
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Phase L2
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+Laenge = RueckmeldungE3.Length(); 
+Anfang = RueckmeldungE3.Find("power") + 7;
+Ende = RueckmeldungE3.Find("pf")-2; 
+LeistungPhaseWatt = RueckmeldungE3.Substr(Anfang, Ende-Anfang); 
+RueckmeldungE3 = RueckmeldungE3.Substr(Anfang,Laenge - Anfang);
+if(Debug)
+{
+	WriteLine("Aktueller Strom L2: " # LeistungPhaseWatt);
+}
+LeistungGesamtWatt = LeistungGesamtWatt + LeistungPhaseWatt.ToFloat();
+if(Debug)
+{
+	WriteLine("Leistung gesamt Watt: " # LeistungGesamtWatt);
+}
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Aktueller Gesamtstrombezug aus dem Netz für Phase 2
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+Anfang = RueckmeldungE3.Find("total") + 7;
+Ende = RueckmeldungE3.Find("total_returned")-2; 
+StromL2BezugNeukWh = RueckmeldungE3.Substr(Anfang, Ende-Anfang); 
+RueckmeldungE3 = RueckmeldungE3.Substr(Anfang,Laenge - Anfang);
+if(Debug)
+{
+	WriteLine("L2 Stromverbrauch gesamt: " # StromL2BezugNeukWh);
+}
+
+dom.GetObject("var_StromL2BezugAltkWh").State(StromL2BezugNeukWh.ToFloat());
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Strombezug seit letzter Ermittlung für Phase 2
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+StromL2BezugDeltakWh = StromL2BezugNeukWh.ToFloat() - StromL2BezugAltkWh;
+if(Debug)
+{
+	WriteLine("L2 Delta Strombezug: " # StromL2BezugDeltakWh);
+}
+
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Stromeinspeisung L2 laut Shelly-Speicher (auskommentiert, solange PV nur an Phase 1 hängt)
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+!Anfang = RueckmeldungE3.Find("total_returned") + 16;
+!Ende = RueckmeldungE3.Find("power")-4; 
+!StromL1EinspeisungNeukWh = RueckmeldungE3.Substr(Anfang, Ende-Anfang); 
+!RueckmeldungE3 = RueckmeldungE3.Substr(Anfang,Laenge - Anfang);
+!if(Debug)
+!{
+!	WriteLine("L2 Stromeinspeisung gesamt: " # StromL2EinspeisungNeukWh);
+!}
+!dom.GetObject("var_StromL2EinspeisungAltkWh").State(StromL2EinspeisungNeukWh.ToFloat());
+
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Stromeinspeisung seit letzter Ermittlung für Phase 2 (auskommentiert, solange PV nur an Phase 1 hängt)
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+!StromL2EinspeisungDeltakWh = StromL2EinspeisungNeukWh.ToFloat() - StromL2EinspeisungAltkWh;
+!if(Debug)
+!{
+!	WriteLine("L2 Delta Stromeinspeisung: " # StromL2EinspeisungDeltakWh);
+!}
+	
+
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Phase L3
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+Laenge = RueckmeldungE3.Length(); 
+Anfang = RueckmeldungE3.Find("power") + 7;
+Ende = RueckmeldungE3.Find("pf")-2; 
+LeistungPhaseWatt = RueckmeldungE3.Substr(Anfang, Ende-Anfang); 
+RueckmeldungE3 = RueckmeldungE3.Substr(Anfang,Laenge - Anfang);
+if(Debug)
+{
+	WriteLine("Aktueller Strom L3: " # LeistungPhaseWatt);
+}
+LeistungGesamtWatt = LeistungGesamtWatt + LeistungPhaseWatt.ToFloat();
+if(Debug)
+{
+	WriteLine("Leistung gesamt Watt: " # LeistungGesamtWatt);
+}
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Aktueller Gesamtstrombezug aus dem Netz für Phase 2
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+Anfang = RueckmeldungE3.Find("total") + 7;
+Ende = RueckmeldungE3.Find("total_returned")-2; 
+StromL3BezugNeukWh = RueckmeldungE3.Substr(Anfang, Ende-Anfang); 
+RueckmeldungE3 = RueckmeldungE3.Substr(Anfang,Laenge - Anfang);
+if(Debug)
+{
+	WriteLine("L3 Stromverbrauch gesamt: " # StromL3BezugNeukWh);
+}
+
+dom.GetObject("var_StromL3BezugAltkWh").State(StromL3BezugNeukWh.ToFloat());
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Strombezug seit letzter Ermittlung für Phase 2
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+StromL3BezugDeltakWh = StromL3BezugNeukWh.ToFloat() - StromL3BezugAltkWh;
+if(Debug)
+{
+	WriteLine("L3 Delta Strombezug: " # StromL3BezugDeltakWh);
+}
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Stromeinspeisung L3 laut Shelly-Speicher (auskommentiert, solange PV nur an Phase 1 hängt)
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+!Anfang = RueckmeldungE3.Find("total_returned") + 16;
+!Ende = RueckmeldungE3.Find("power")-4; 
+!StromL1EinspeisungNeukWh = RueckmeldungE3.Substr(Anfang, Ende-Anfang); 
+!RueckmeldungE3 = RueckmeldungE3.Substr(Anfang,Laenge - Anfang);
+!if(Debug)
+!{
+!	WriteLine("L3 Stromeinspeisung gesamt: " # StromL3EinspeisungNeukWh);
+!}
+!dom.GetObject("var_StromL3EinspeisungAltkWh").State(StromL3EinspeisungNeukWh.ToFloat());
+
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Stromeinspeisung seit letzter Ermittlung für Phase 3 (auskommentiert, solange PV nur an Phase 1 hängt)
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+!StromL3EinspeisungDeltakWh = StromL3EinspeisungNeukWh.ToFloat() - StromL3EinspeisungAltkWh;
+!if(Debug)
+!{
+!	WriteLine("L3 Delta Stromeinspeisung: " # StromL3EinspeisungDeltakWh);
+!}
+
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Zusammenfassung
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+StromGesamtBezugkWh = StromL1BezugNeukWh.ToFloat() + StromL2BezugNeukWh.ToFloat() + StromL3BezugNeukWh.ToFloat();
+StromGesamtBezugDeltakWh = StromL1BezugDeltakWh.ToFloat() + StromL2BezugDeltakWh.ToFloat() + StromL3BezugDeltakWh.ToFloat();
+
+StromGesamtBezugkWh = StromGesamtBezugkWh / 1000;
+if(Debug)
+{
+	WriteLine("Strombezug Gesamt in kWh seit letzter Messung: " # StromGesamtBezugkWh);
+}
+
+StromGesamtBezugDeltakWh = StromGesamtBezugDeltakWh / 1000;
+if(Debug)
+{
+	WriteLine("Strombezug Delta in kWh seit letzter Messung: " # StromGesamtBezugDeltakWh);
+}
+
+
+
+StromZaehlerStandNeu = StromZaehlerStandAlt + StromGesamtBezugDeltakWh - StromL1EinspeisungDeltakWh.ToFloat()/1000;
+!Prüfung, ob eingespeist wurde
+if(StromZaehlerStandNeu < StromZaehlerStandAlt)
+{
+	if(Debug)
+		{	
+			WriteLine("ZaehlerstandALT: " # StromZaehlerStandAlt);
+			WriteLine("ZaehlerstandNeu: " # StromZaehlerStandNeu);
+			WriteLine("Stromeinspeisung gesamt bisher: " + StromEinspeisungGesamt);
+		}
+	StromEinspeisungGesamt = StromEinspeisungGesamt + StromL1EinspeisungDeltakWh.ToFloat()/1000 - StromGesamtBezugDeltakWh;
+	dom.GetObject("var_StromEinspeisungGesamt").State(StromEinspeisungGesamt); 
+	if(Debug)
+	{	
+		WriteLine("Eingespeist wurden kWh: " # StromEinspeisungGesamt);
+	}
+}
+
+
+
+dom.GetObject("var_StromZaehlerStand").State(StromZaehlerStandNeu);
+if(Debug)
+{
+	WriteLine("Gesamtstrom in kWh lt. Shelly: " # StromGesamtBezugkWh);
+	WriteLine("Gesamtstrom in kWh Delta lt. Shelly: " # StromGesamtBezugDeltakWh);
+	WriteLine("Zählerstand simuliert: " # StromZaehlerStandNeu);
+}
+
+
+
+!----------------------------------------------------------------------------------------------------------------------------------------
+!Stromverbraeuche und -kosten dokumentieren
+!----------------------------------------------------------------------------------------------------------------------------------------
+
+StromVerbrauchHeute = dom.GetObject("var_StromVerbrauchHeute").Value();
+StromVerbrauchMonat = dom.GetObject("var_StromVerbrauchMonat").Value();
+StromVerbrauchJahr = dom.GetObject("var_StromVerbrauchJahr").Value(); 
+
+StromVerbrauchHeute = StromVerbrauchHeute + StromGesamtBezugDeltakWh;
+StromVerbrauchMonat = StromVerbrauchMonat + StromGesamtBezugDeltakWh;
+StromVerbrauchJahr = StromVerbrauchJahr + StromGesamtBezugDeltakWh;
+
+if(Debug)
+{
+	WriteLine("Stromverbrauch Heute: "# StromVerbrauchHeute);
+	WriteLine("Stromverbrauch Monat: "# StromVerbrauchMonat);
+	WriteLine("Stromverbrauch Jahr: "# StromVerbrauchJahr);
+}
+dom.GetObject("var_StromVerbrauchHeute").State(StromVerbrauchHeute);
+dom.GetObject("var_StromVerbrauchMonat").State(StromVerbrauchMonat);
+dom.GetObject("var_StromVerbrauchJahr").State(StromVerbrauchJahr);
+
+
+StromKostenHeute = dom.GetObject("var_StromKostenHeute").Value();
+StromKostenMonat = dom.GetObject("var_StromKostenMonat").Value();
+StromKostenJahr = dom.GetObject("var_StromKostenJahr").Value(); 
+
+
+if(Debug)
+{
+	
+	WriteLine("Stromkosten-Delta" # StromGesamtBezugDeltakWh*StrompreisCCU);
+
+}
+
+
+
+StromKostenHeute = StromKostenHeute + StromGesamtBezugDeltakWh*StrompreisCCU;
+StromKostenMonat = StromKostenMonat + StromGesamtBezugDeltakWh*StrompreisCCU;
+StromKostenJahr = StromKostenJahr + StromGesamtBezugDeltakWh*StrompreisCCU;
+
+if(Debug)
+{
+	WriteLine("StromKosten Heute: "# StromKostenHeute);
+	WriteLine("StromKosten Monat: "# StromKostenMonat);
+	WriteLine("StromKosten Jahr: "# StromKostenJahr);
+}
+dom.GetObject("var_StromKostenHeute").State(StromKostenHeute);
+dom.GetObject("var_StromKostenMonat").State(StromKostenMonat);
+dom.GetObject("var_StromKostenJahr").State(StromKostenJahr);
