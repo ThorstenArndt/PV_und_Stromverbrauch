@@ -1,0 +1,46 @@
+!Überwachung des allgemeinen Stromverbrauchs und der Einspeisung durch die PV Anlage
+!Input: Stromverbrauch "Wurzelzähler" am Stromkasten
+!Input: Stromeinspeisung PV Anlage über Messsteckdose
+
+!Auswertungen
+!Einspeisung von PV ins Hausnetz aktuelle
+!Einspeisung von PV ins Hausnetz gesamt
+
+!Grundverbrauch Strom aktuell
+!negativer Verbrauch (rückwärtsdrehender Zähler)
+
+!Systemvariablen
+! Einspeisung gesamt
+! Einspeisung aktuell
+! Stromverbrauch gesamt
+! Stromverbrauch aktuell 
+
+
+!Berechnung Einspeisung in Hausnetz
+!Letzten Gesamtverbrauch holen (Systemvariable) 
+!Aktuellen Gesamtinput holen (Steckdose)
+!Delta berechnen
+!Neuen Gesamtverbrauch schreiben
+!Aktuelle Einspeisung schreiben 
+
+!Hier PV Einspeisung Gesamt betrachten
+var StromInputGesamtALT =  dom.GetObject("var_StromInputGesamt").Value();
+var StromInputGesamtNeu =  dom.GetObject(hier die Adresse der Steckdose eintragen).Value();
+var StromInputAktuell = StromInputGesamtNeu - StromInputGesamtALT;
+dom.GetObject("var_StromInputGesamt").State(StromInputGesamtNeu);
+
+
+
+!Wurzelzaehler auswerten
+var StromLetzterZaehlerstand =  dom.GetObject("var_StromLetzterZaehlerstand").Value();
+var StromAktuellerZaehlerstand = dom.GetObject(hier die Adresse des Wurzelzaehlers eintragen).Value(); 
+var StromEingespeistBisher = dom.GetObject("var_StromEingespeistBisher").Value();
+var StromEingespeistNeu; 
+
+!Negative Einspeisung berechnen
+if (StromLetzterZaehlerstand > StromAktuellerZaehlerstand)
+{
+	StromEingespeistNeu = StromLetzterZaehlerstand - StromAktuellerZaehlerstand + StromEingespeistBisher;
+	dom.Object("var_StromEingespeistBisher").State(StromEingespeistNeu);
+}
+
